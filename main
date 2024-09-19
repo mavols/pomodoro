@@ -3,10 +3,14 @@ from tkinter import Label, Entry, Toplevel, messagebox, StringVar, Button, Frame
 import pystray
 from PIL import Image, ImageDraw
 import threading
+from AppKit import NSApplication, NSApplicationActivationPolicyProhibited
 
 
 class PomodoroApp:
     def __init__(self, master):
+        # Скрываем приложение из Dock
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyProhibited)
+
         self.master = master
         self.master.overrideredirect(True)
         self.master.attributes('-topmost', True)
