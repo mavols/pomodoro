@@ -1,0 +1,253 @@
+import tkinter as tk
+from tkinter import Label, Entry, Toplevel, messagebox, StringVar, Button, Frame
+import pystray
+from PIL import Image, ImageDraw
+import threading
+
+
+class PomodoroApp:
+    def __init__(self, master):
+        self.master = master
+        self.master.overrideredirect(True)
+        self.master.attributes('-topmost', True)
+        self.master.attributes('-alpha', 0.25)  # Прозрачность увеличена в два раза
+
+        self.master.configure(bg='black')
+
+        self.work_time = 10 * 60  # 10 минут
+        self.break_time = 10 * 60  # 10 минут
+        self.is_work_time = True
+        self.remaining_time = self.work_time
+        self.running = False  # Таймер изначально не запущен
+
+        self.font_size = 40
+        self.font_family = 'Helvetica'
+        self.timer_label = Label(self.master, text=self.format_time(self.remaining_time),
+                                 font=(self.font_family, self.font_size), fg='white', bg='black')
+        self.timer_label.pack(pady=(20, 0))
+
+        self.timer_label.update_idletasks()
+        label_width = self.timer_label.winfo_width()
+        label_height = self.timer_label.winfo_height() + 20
+
+        button_y = 10
+        button_spacing = 10
+
+        self.set_label = Label(self.master, text="[set]", fg='white', bg='black', font=(self.font_family, 10))
+        self.set_label.place(x=button_spacing, y=button_y)
+        self.set_label.bind('<Button-1>', self.open_config)
+
+        self.hide_label = Label(self.master, text="[hide]", fg='white', bg='black', font=(self.font_family, 10))
+        self.hide_label.place(x=label_width - self.hide_label.winfo_reqwidth() - button_spacing, y=button_y)
+        self.hide_label.bind('<Button-1>', self.minimize)
+
+        screen_width = self.master.winfo_screenwidth()
+        screen_height = self.master.winfo_screenheight()
+        window_height = label_height + 5
+        self.master.geometry(f"{label_width}x{window_height}+{screen_width - label_width}+90")
+
+        self.timer_label.bind('<Button-1>', self.toggle_timer)
+        self.update_clock_id = None
+
+        self.update_clock()
+
+        # Добавляем трей
+        self.create_tray_icon()
+
+    def minimize(self, event=None):
+        """Сворачиваем окно, убираем с экрана и останавливаем таймер."""
+        self.running = False  # Остановка таймера
+        self.master.withdraw()
+
+    def restore_and_restart(self, icon=None, item=None):
+        """Восстанавливаем окно на экран и запускаем таймер с начала."""
+        self.master.deiconify()  # Показать окно
+        self.master.attributes('-topmost', True)  # Сделать поверх всех окон
+        self.master.attributes('-topmost', False)  # Снять флаг topmost
+        self.master.lift()  # Поднять окно на передний план
+        self.master.attributes('-topmost', True)  # Установить опять поверх всех окон
+        self.master.focus_force()  # Вернуть фокус на окно
+        self.reset_timer()  # Сброс таймера на начало
+        self.running = True  # Запуск таймера
+        self.update_clock()  # Обновление таймера
+
+    def reset_timer(self):
+        """Сброс таймера на начало рабочего времени."""
+        self.is_work_time = True
+        self.remaining_time = self.work_time
+
+    def quit_app(self, icon, item):
+        """Завершаем приложение."""
+        icon.stop()
+        self.master.quit()
+
+    def create_tray_icon(self):
+        """Создаем иконку для трея с меню."""
+        image = self.create_clock_icon()  # Генерация иконки в виде часов
+
+        # Создаем меню для правого клика с пунктами "Start" и "Quit"
+        menu = pystray.Menu(
+            pystray.MenuItem('Start', self.restore_and_restart),  # Пункт для запуска таймера
+            pystray.MenuItem('Quit', self.quit_app)  # Пункт для выхода из программы
+        )
+
+        # Создаем иконку для трея с меню и обработчиком кликов
+        self.tray_icon = pystray.Icon("pomodoro", image, menu=menu)
+
+        # Обработка левого клика для запуска таймера
+        self.tray_icon.run_detached()
+
+        # Показываем иконку
+        self.tray_icon.visible = True
+        self.tray_icon.icon = image
+        self.tray_icon.title = "Pomodoro Timer"
+        self.tray_icon.menu = menu
+
+    def create_clock_icon(self):
+        """Создаем изображение часов для трея."""
+        size = 64
+        image = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+
+        # Рисуем окружность (граница часов)
+        draw.ellipse((8, 8, size - 8, size - 8), outline="white", width=2)
+
+        # Рисуем стрелки (имитация часов)
+        draw.line((size // 2, size // 2, size // 2, size // 4), fill="white", width=2)  # Часовая стрелка
+        draw.line((size // 2, size // 2, size // 4, size // 2), fill="white", width=2)  # Минутная стрелка
+
+        return image
+
+    def toggle_timer(self, event):
+        """Переключение таймера между паузой и работой."""
+        self.running = not self.running
+        if self.running:
+            self.update_clock()
+
+    def update_clock(self):
+        """Обновление таймера каждую секунду."""
+        if self.running:
+            self.timer_label.config(text=self.format_time(self.remaining_time))
+            
+            if self.remaining_time <= 10:  # Если осталось 10 секунд или меньше
+                # Чередуем цвет фона между красным и черным каждую секунду
+                current_bg = self.master.cget("bg")
+                new_bg = "red" if current_bg == "black" else "black"
+                self.master.configure(bg=new_bg)
+                self.timer_label.configure(bg=new_bg)
+                self.set_label.configure(bg=new_bg)
+                self.hide_label.configure(bg=new_bg)
+
+            if self.remaining_time <= 0:
+                self.is_work_time = not self.is_work_time
+                self.remaining_time = self.work_time if self.is_work_time else self.break_time
+                self.master.configure(bg="black")  # Возвращаем черный цвет по завершению
+                self.timer_label.configure(bg="black")
+                self.set_label.configure(bg="black")
+                self.hide_label.configure(bg="black")
+            else:
+                self.remaining_time -= 1
+            self.update_clock_id = self.master.after(1000, self.update_clock)
+
+    def format_time(self, seconds):
+        """Форматирование времени для отображения."""
+        return f"{seconds // 60}:{seconds % 60:02d}"
+
+    def open_config(self, event):
+        """Открываем окно настроек времени."""
+        config_window = Toplevel(self.master)
+        config_window.title("Настройка времени")
+        config_window.configure(bg='#333333')
+
+        screen_width = self.master.winfo_screenwidth()
+        screen_height = self.master.winfo_screenheight()
+        window_width = 300
+        window_height = 200
+
+        position_x = (screen_width - window_width) // 2
+        position_y = (screen_height - window_height) // 2
+
+        config_window.geometry(f"{window_width}x{window_height}+{position_x}+{position_y}")
+
+        work_var = StringVar(value=str(self.work_time // 60))
+        rest_var = StringVar(value=str(self.break_time // 60))
+
+        frame = Frame(config_window, bg='#333333')
+        frame.pack(expand=True)
+
+        work_frame = Frame(frame, bg='#333333')
+        work_frame.pack(pady=10)
+        Label(work_frame, text="Work Time:", fg='white', bg='#333333',
+              font=(self.font_family, 12)).pack(side="left")
+        
+        # Валидация для ввода чисел от 1 до 99
+        vcmd = (self.master.register(self.validate_entry), '%P')
+        
+        work_entry = Entry(work_frame, textvariable=work_var, width=4,
+                           font=(self.font_family, 12), justify='center', validate='key', validatecommand=vcmd)
+        work_entry.pack(side="left", padx=5)
+        Label(work_frame, text="minutes", fg='white', bg='#333333',
+              font=(self.font_family, 12)).pack(side="left")
+
+        rest_frame = Frame(frame, bg='#333333')
+        rest_frame.pack(pady=10)
+        Label(rest_frame, text="Rest Time:", fg='white', bg='#333333',
+              font=(self.font_family, 12)).pack(side="left")
+        rest_entry = Entry(rest_frame, textvariable=rest_var, width=4,
+                           font=(self.font_family, 12), justify='center', validate='key', validatecommand=vcmd)
+        rest_entry.pack(side="left", padx=5)
+        Label(rest_frame, text="minutes", fg='white', bg='#333333',
+              font=(self.font_family, 12)).pack(side="left")
+
+        confirm_button = Button(frame, text="Confirm",
+                                command=lambda: self.apply_config_from_window(work_entry.get(),
+                                                                              rest_entry.get(),
+                                                                              config_window),
+                                fg='black', bg='red', font=(self.font_family, 12))
+        confirm_button.pack(pady=(10, 0))
+
+        # Автоматический фокус на поле для работы и выделение содержимого
+        work_entry.focus_set()
+        work_entry.selection_range(0, tk.END)
+
+        config_window.bind('<Return>',
+                           lambda event: self.apply_config_from_window(work_entry.get(),
+                                                                       rest_entry.get(),
+                                                                       config_window))
+
+    def apply_config_from_window(self, work_time, rest_time, window):
+        """Применяем новое время из окна настроек."""
+        try:
+            self.work_time = int(work_time) * 60
+            self.break_time = int(rest_time) * 60
+            # Если таймер на паузе, обновляем оставшееся время согласно новому рабочему времени
+            self.remaining_time = self.work_time if self.is_work_time else self.break_time
+            
+            # Если таймер был на паузе, обновим оставшееся время на экране
+            self.timer_label.config(text=self.format_time(self.remaining_time))
+            
+            # Если таймер активен, обновляем отсчет
+            if self.running:
+                if self.update_clock_id is not None:
+                    self.master.after_cancel(self.update_clock_id)
+                    self.update_clock_id = None
+                self.update_clock()  # Запускаем обновление таймера
+
+            window.destroy()
+        except ValueError:
+            messagebox.showerror("Ошибка", "Введите корректное количество минут")
+
+    def validate_entry(self, value):
+        """Функция для валидации, позволяет вводить только цифры от 1 до 99."""
+        if value.isdigit():
+            if 1 <= int(value) <= 99:
+                return True
+        elif value == "":  # Разрешаем очищение поля
+            return True
+        return False
+
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = PomodoroApp(root)
+    root.mainloop()
